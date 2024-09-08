@@ -1,0 +1,10 @@
+TokenType.PUSH
+TokenType.LABEL
+TokenType.ADDR
+TokenType.POP
+TokenType.LABEL
+TokenType.ADDR
+TokenType.ADDR
+TokenType.ADDR
+TokenType.ADD
+TokenType.PUSH

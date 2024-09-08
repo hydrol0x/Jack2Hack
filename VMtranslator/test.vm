@@ -1,0 +1,3 @@
+push local 10
+pop constant 18
+10 50 add push
