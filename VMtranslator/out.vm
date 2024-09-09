@@ -1,10 +1,11 @@
-TokenType.PUSH
-TokenType.LABEL
-TokenType.ADDR
-TokenType.POP
-TokenType.LABEL
-TokenType.ADDR
-TokenType.ADDR
-TokenType.ADDR
-TokenType.ADD
-TokenType.PUSH
+<__main__.Token object at 0x000001DD69C73AD0>
+<__main__.Token object at 0x000001DD69C73AA0>
+<__main__.Token object at 0x000001DD69C73A70>
+<__main__.Token object at 0x000001DD69C73F50>
+<__main__.Token object at 0x000001DD69C73F80>
+<__main__.Token object at 0x000001DD69C73FB0>
+<__main__.Token object at 0x000001DD69C900E0>
+<__main__.Token object at 0x000001DD69C90110>
+<__main__.Token object at 0x000001DD69C90140>
+<__main__.Token object at 0x000001DD69C90170>
+<__main__.Token object at 0x000001DD69C73EC0>
