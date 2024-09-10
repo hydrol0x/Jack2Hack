@@ -57,6 +57,9 @@ class Symbol:
         self.token = token
         self.offset = offset
 
+    def __repr__(self) -> str:
+        return str(self.token)
+
 
 class LexError(Exception):
     pass
@@ -235,7 +238,7 @@ class Parser:
 
     def get_symbol(self, token: Token) -> Symbol:
         offset = 0
-        match token.type.name:
+        match token.lexeme:
             case "local":
                 offset = self.LOCAL_START
             case "argument":
@@ -315,21 +318,21 @@ class Parser:
         return statements
 
 
+class WriterError(Exception):
+    pass
+
+
 class CodeWriter:
     # Writes ASM from program parse
     def __init__(self, parsed_program: list[Statement]):
         self.program = parsed_program
 
-    def symbol_asm(self, symbol: Symbol, address: int):
-      
-
     def push_asm(self, push: PushStatement) -> str:
         symbol = push.symbol
-        address = push.address
-        symbol_asm = self.symbol_asm(symbol, int(address.lexeme))
+        address = int(push.address.lexeme)
         if symbol.token.lexeme == "constant":
-        # Push `address` to stack
-        # Here, address is not an address but just a constant/litearl value
+            # Push `address` to stack
+            # Here, address is not an address but just a constant/litearl value
             asm = [
                 "\n// D = i",
                 f"@{address}",
@@ -338,17 +341,61 @@ class CodeWriter:
                 "@SP",
                 "A = M",
                 "M = D",
-                "\n// SP = SP+1",
+                "\n// SP += 1",
                 "@SP",
                 "M=M+1",
             ]
         elif symbol.token.lexeme == "pointer":
             # Pointer will return THIS if 0 and THAT if 1
             # push to this if 0, push to that if 1
-
+            if address == 0:
+                # *SP = this
+                asm = [
+                    "\n// D = this",
+                    "@THIS",
+                    "D = A",
+                    "\n// RAM[SP] = THIS",
+                    "@SP",
+                    "A = M",
+                    "M = D",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+            elif address == 1:
+                # *SP = that
+                asm = [
+                    "\n// D = this",
+                    "@THAT",
+                    "D = A",
+                    "\n// RAM[SP] = THIS",
+                    "@SP",
+                    "A = M",
+                    "M = D",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+            else:
+                raise WriterError(
+                    f"Invalid value pushed to `pointer`. Expected `0` or `1` found {address}"
+                )
         else:
-            asm = [f"@{address+symbol.offset}"]
-        
+            print(f"symbol {symbol}")
+            print(f"offset {symbol.offset}")
+            asm = [
+                f"\n// D = {address+symbol.offset}",
+                f"@{address+symbol.offset}",
+                "D = A",
+                f"\n// RAM[SP] = {symbol.token.lexeme}[{address}]",
+                "@SP",
+                "A = M",
+                "M = D",
+                "\n// SP += 1",
+                "@SP",
+                "M=M+1",
+            ]
+
         # Push value at symbol[address] to stack
         # Converted to mem[address + symbol_start]
         return asm
@@ -379,11 +426,17 @@ class CodeWriter:
 
 
 if __name__ == "__main__":
-    program = ["push local 10", "push local 12", "pop constant 23", "add"]
+    program = [
+        "push this 7",
+    ]  # "push local 12", "pop constant 23", "add"]
     lexer = Lexer(program)
     lexed = lexer.lex_program()
     print("Lexed Program")
     print(*lexed, sep="\n")
     parser = Parser(lexed)
     print("Parsed Program")
-    print(*parser.parse(), sep="\n")
+    parsed = parser.parse()
+    print(*parsed, sep="\n")
+
+    writer = CodeWriter(parsed)
+    print(*[line.lstrip(" ") + "\n" for line in writer.push_asm(parsed[0])], sep="")
