@@ -52,10 +52,10 @@ class Token:
 
 
 class Symbol:
-    def __init__(self, token: Token, offset: int):
+    def __init__(self, token: Token, pointer: int):
         # offset is start of memory segment in RAM
         self.token = token
-        self.offset = offset
+        self.pointer = pointer
 
     def __repr__(self) -> str:
         return str(self.token)
@@ -195,12 +195,12 @@ class Parser:
         # R<N> is memory[13-15]
         # Static from X.vm is X.i for a symbol i
         self.SP: int = 0
-        self.LOCAL_START: int = 1
-        self.ARG_START: int = 2
-        self.THIS_START: int = 3
-        self.THAT_START: int = 4
-        self.STACK_START: int = 256
-        self.TEMP_START: int = 5
+        self.LOCAL_PTR: int = 1
+        self.ARG_PTR: int = 2
+        self.THIS_PTR: int = 3
+        self.THAT_PTR: int = 4
+        self.STACK_PTR: int = 256
+        self.TEMP_PTR: int = 5
 
     def is_at_end(self) -> bool:
         return self.peek().type == TokenType.EOF
@@ -240,19 +240,19 @@ class Parser:
         offset = 0
         match token.lexeme:
             case "local":
-                offset = self.LOCAL_START
+                offset = self.LOCAL_PTR
             case "argument":
-                offset = self.ARG_START
+                offset = self.ARG_PTR
             case "this":
-                offset = self.THIS_START
+                offset = self.THIS_PTR
             case "that":
-                offset = self.THAT_START
+                offset = self.THAT_PTR
             case "constant":
                 offset = 0
                 # Const will push a value to the stack
                 # const is not a real segment, simply mem[SP] = i
             case "temp":
-                offset = self.TEMP_START
+                offset = self.TEMP_PTR
             case "pointer":
                 # Pointer will return THIS if 0 and THAT if 1
                 offset = 0
@@ -274,9 +274,6 @@ class Parser:
                 symbol = self.get_symbol(symbol_token)
                 address = self.consume(TokenType.ADDR)
                 statements.append(PopStatement(symbol, address))
-                continue
-            elif self.match(TokenType.ADD):
-                statements.append(ArithmeticStatement(TokenType.ADD))
                 continue
             elif self.match(TokenType.ADD):
                 statements.append(ArithmeticStatement(TokenType.ADD))
@@ -323,24 +320,26 @@ class WriterError(Exception):
 
 
 class CodeWriter:
+    # TODO: unhardcode the offsets for memory segments, access through ram pointers
     # Writes ASM from program parse
     def __init__(self, parsed_program: list[Statement]):
         self.program = parsed_program
 
-    def push_asm(self, push: PushStatement) -> str:
+    def push_asm(self, push: PushStatement) -> list[str]:
+        # TODO: implement push and pop to static
         symbol = push.symbol
         address = int(push.address.lexeme)
         if symbol.token.lexeme == "constant":
             # Push `address` to stack
             # Here, address is not an address but just a constant/litearl value
             asm = [
-                "\n// D = i",
+                f"\n// D = {address}",
                 f"@{address}",
-                "D = A",
+                "D=A",
                 "\n// RAM[SP] = D",
                 "@SP",
-                "A = M",
-                "M = D",
+                "A=M",
+                "M=D",
                 "\n// SP += 1",
                 "@SP",
                 "M=M+1",
@@ -353,11 +352,11 @@ class CodeWriter:
                 asm = [
                     "\n// D = this",
                     "@THIS",
-                    "D = A",
+                    "D=A",
                     "\n// RAM[SP] = THIS",
                     "@SP",
-                    "A = M",
-                    "M = D",
+                    "A=M",
+                    "M=D",
                     "\n// SP += 1",
                     "@SP",
                     "M=M+1",
@@ -367,11 +366,11 @@ class CodeWriter:
                 asm = [
                     "\n// D = this",
                     "@THAT",
-                    "D = A",
+                    "D=A",
                     "\n// RAM[SP] = THIS",
                     "@SP",
-                    "A = M",
-                    "M = D",
+                    "A=M",
+                    "M=D",
                     "\n// SP += 1",
                     "@SP",
                     "M=M+1",
@@ -381,16 +380,19 @@ class CodeWriter:
                     f"Invalid value pushed to `pointer`. Expected `0` or `1` found {address}"
                 )
         else:
-            print(f"symbol {symbol}")
-            print(f"offset {symbol.offset}")
             asm = [
-                f"\n// D = {address+symbol.offset}",
-                f"@{address+symbol.offset}",
-                "D = A",
+                f"\n// D = {address}+RAM[{symbol.pointer}]",
+                f"@{symbol.pointer}",
+                "D=M",
+                f"@{address}",
+                "D=D + A",  # D is the address needed
+                f"\n// D = RAM[D]",
+                "A=D",
+                "D=M",
                 f"\n// RAM[SP] = {symbol.token.lexeme}[{address}]",
                 "@SP",
-                "A = M",
-                "M = D",
+                "A=M",
+                "M=D",
                 "\n// SP += 1",
                 "@SP",
                 "M=M+1",
@@ -400,36 +402,156 @@ class CodeWriter:
         # Converted to mem[address + symbol_start]
         return asm
 
-    def pop_asm(self, pop: PopStatement) -> str:
-        pass
+    def pop_asm(self, pop: PopStatement) -> list[str]:
+        # TODO: properly handl *SP shoudl be @SP, A=M
+        symbol = pop.symbol
+        address = int(pop.address.lexeme)
+        if symbol.token.lexeme == "constant":
+            # Push `address` to stack
+            # Here, address is not an address but just a constant/litearl value
+            raise WriterError("Illegal argument. Cannot pop from `constant`")
+        elif symbol.token.lexeme == "pointer":
+            # Pointer will return THIS if 0 and THAT if 1
+            # push to this if 0, push to that if 1
+            this_that = ""
+            if address == 0:
+                # *SP = this
+                this_that = "THIS"
+            elif address == 1:
+                # *SP = that
+                this_that = "THAT"
+            else:
+                raise WriterError(
+                    f"Invalid value pushed to `pointer`. Expected `0` or `1` found {address}"
+                )
+            asm = [
+                "\n// D = RAM[SP]",
+                "@SP",
+                "A=M",
+                "D=M",
+                f"\n// THIS = D",
+                f"@{this_that}",
+                "M=D",
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
+            ]
+        else:
+            asm = [
+                f"\n//R13 = RAM[{symbol.token.lexeme}] + {address}",
+                f"@{symbol.pointer}",
+                "D=M",
+                f"@{address}",
+                "D=D+M",
+                "@R13",
+                "M=D",
+                "\n// D = RAM[SP]",
+                "@SP",
+                "A=M",
+                "D=M",
+                "\n// RAM[R13] = D" "@R13",
+                "A=M",
+                "M=D",
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
+            ]
 
-    def arithmetic_asm(self, statement) -> str:
-        pass
+        # Push value at symbol[address] to stack
+        # Converted to mem[address + symbol_start]
+        return asm
 
-    def logic_asm(self, statement) -> str:
-        pass
+    def arithmetic_asm(self, statement: ArithmeticStatement) -> list[str]:
+        asm = []
+        match statement.op_type:
+            case TokenType.ADD:
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// RAM[SP] = D+M",
+                    "@SP",
+                    "A=M",
+                    "M=D+M",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+            case TokenType.SUB:
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// RAM[SP] = M-D",
+                    "@SP",
+                    "A=M",
+                    "M=M-D",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+        return asm
 
-    def writeCode(self):
+    # def logic_asm(self, statement) -> list[str]:
+    #     pass
+
+    def write_code(self):
+        out_asm = []
         for statement in self.program:
             if isinstance(statement, PushStatement):
-                self.push_asm(statement)
+                descriptor = [
+                    f"\n//--- push {statement.symbol.token.lexeme} {statement.address.lexeme} ---"
+                ]
+                asm = self.push_asm(statement)
+                descriptor.extend(asm)
+                out_asm += descriptor
             elif isinstance(statement, PopStatement):
-                self.pop_asm(statement)
-            elif isinstance(statement, PushStatement):
-                self.push_asm(statement)
-            elif isinstance(statement, PopStatement):
-                self.pop_asm(statement)
+                descriptor = [
+                    f"\n//--- pop {statement.symbol.token.lexeme} {statement.address.lexeme} ---"
+                ]
+                asm = self.pop_asm(statement)
+                descriptor.extend(asm)
+                out_asm += descriptor
             elif isinstance(statement, ArithmeticStatement):
-                self.arithmetic_asm(statement)
+                descriptor = [f"\n//--- add ---"]
+                asm = self.arithmetic_asm(statement)
+                descriptor.extend(asm)
+                out_asm += descriptor
             elif isinstance(statement, LogicStatement):
+                raise NotImplementedError
                 self.logic_asm(statement)
+
+        return out_asm
 
 
 if __name__ == "__main__":
     program = [
         "push this 7",
+        "push constant 13",
+        "push local 20",
+        "pop local 20",
+        "pop local 22",
     ]  # "push local 12", "pop constant 23", "add"]
     lexer = Lexer(program)
+    lexer.read_file(
+        Path(
+            r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
+        )
+    )
     lexed = lexer.lex_program()
     print("Lexed Program")
     print(*lexed, sep="\n")
@@ -439,4 +561,7 @@ if __name__ == "__main__":
     print(*parsed, sep="\n")
 
     writer = CodeWriter(parsed)
-    print(*[line.lstrip(" ") + "\n" for line in writer.push_asm(parsed[0])], sep="")
+    print(*writer.write_code(), sep="\n")
+    with open("./out.asm", "w") as outfile:
+        outfile.writelines([line + "\n" for line in writer.write_code()])
+    # print(*[line.lstrip(" ") + "\n" for line in writer.push_asm(parsed[0])], sep="")
