@@ -504,6 +504,23 @@ class CodeWriter:
                     "@SP",
                     "M=M+1",
                 ]
+            case TokenType.NEG:
+                asm = [
+                    "\n// SP -=1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = -RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=-M",
+                    "\n// RAM[SP] = D",
+                    "@SP",
+                    "A=M",
+                    "M=D",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
         return asm
 
     # def logic_asm(self, statement) -> list[str]:

@@ -17,7 +17,7 @@ def remove_comments(program: list) -> list:
     return program
 
 
-def parse_file(path: str) -> None:
+def parse_file(path: str) -> list:
     program = []
     with open(path, "r") as file:
         for line in file:
@@ -254,3 +254,18 @@ def assemble(path: str) -> list:
     program = parse_file(path)
     machine_program = parse_program(parse_labels(program))
     return machine_program
+
+
+def assemble_list(assembly: list[str]) -> list[str]:
+    machine_program = parse_program(parse_labels(assembly))
+    return machine_program
+
+
+if __name__ == "__main__":
+    path = r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\out.asm"
+    assembled = assemble(path)
+    # bootstrap_asm = ["@256", "D=A", "@SP", "M=D"]
+    # assembled_bootstrap = assemble_list(bootstrap_asm)
+    # assembled = bootstrap_asm + assembled
+    with open("out.hack", "w") as outfile:
+        outfile.writelines(line + "\n" for line in assembled)
