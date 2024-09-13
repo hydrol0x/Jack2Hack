@@ -66,8 +66,8 @@ class LexError(Exception):
 
 
 class Lexer:
-    def __init__(self, program):
-        self.program: list[str] = program
+    def __init__(self):
+        self.program: list[str] = []
         # self.program_file = program_file
         self.tokens: list[Token] = []
 
@@ -322,8 +322,17 @@ class WriterError(Exception):
 class CodeWriter:
     # TODO: unhardcode the offsets for memory segments, access through ram pointers
     # Writes ASM from program parse
-    def __init__(self, parsed_program: list[Statement]):
-        self.program = parsed_program
+    def __init__(self, file: Path):
+        self.program_file = file
+        self.file_name = file.stem
+        self.program = []
+
+    def read_file(self):
+        lexer = Lexer()
+        lexer.read_file(self.program_file)
+        lexed = lexer.lex_program()
+        parser = Parser(lexed)
+        self.program = parser.parse()
 
     def push_asm(self, push: PushStatement) -> list[str]:
         # TODO: implement push and pop to static
@@ -344,6 +353,23 @@ class CodeWriter:
                 "@SP",
                 "M=M+1",
             ]
+        elif symbol.token.lexeme == "static":
+            # If function defined in Foo.vm push to Foo.i
+            # This maps thru assembler as label RAM[16]-RAM[256]
+            label = f"{self.file_name}.{address}"
+            asm = [
+                f"\n// D = RAM[{label}]",
+                f"@{label}",
+                "D=A",
+                f"\n// RAM[SP] = D",
+                "@SP",
+                "A=M",
+                "M=D",
+                "\n// SP += 1",
+                "@SP",
+                "M=M+1",
+            ]
+
         elif symbol.token.lexeme == "pointer":
             # Pointer will return THIS if 0 and THAT if 1
             # push to this if 0, push to that if 1
@@ -410,6 +436,20 @@ class CodeWriter:
             # Push `address` to stack
             # Here, address is not an address but just a constant/litearl value
             raise WriterError("Illegal argument. Cannot pop from `constant`")
+        elif symbol.token.lexeme == "static":
+            label = f"{self.file_name}.{address}"
+            asm = [
+                "\n// D = RAM[SP]",
+                "@SP",
+                "A=M",
+                "D=M",
+                f"\n// {label} = D",
+                f"@{label}",
+                "M=D",
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
+            ]
         elif symbol.token.lexeme == "pointer":
             # Pointer will return THIS if 0 and THAT if 1
             # push to this if 0, push to that if 1
@@ -556,29 +596,33 @@ class CodeWriter:
 
 
 if __name__ == "__main__":
-    program = [
-        "push this 7",
-        "push constant 13",
-        "push local 20",
-        "pop local 20",
-        "pop local 22",
-    ]  # "push local 12", "pop constant 23", "add"]
-    lexer = Lexer(program)
-    lexer.read_file(
-        Path(
-            r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
-        )
-    )
-    lexed = lexer.lex_program()
-    print("Lexed Program")
-    print(*lexed, sep="\n")
-    parser = Parser(lexed)
-    print("Parsed Program")
-    parsed = parser.parse()
-    print(*parsed, sep="\n")
+    # program = [
+    #     "push this 7",
+    # "push constant 13",
+    # "push local 20",
+    # "pop local 20",
+    # "pop local 22",
+    # ]  # "push local 12", "pop constant 23", "add"]
+    # lexer = Lexer(program)
+    # lexer.read_file(
+    # Path(
+    # r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
+    # )
+    # )
+    # lexed = lexer.lex_program()
+    # print("Lexed Program")
+    # print(*lexed, sep="\n")
+    # parser = Parser(lexed)
+    # print("Parsed Program")
+    # parsed = parser.parse()
+    # print(*parsed, sep="\n")
+    #
 
-    writer = CodeWriter(parsed)
+    file = Path(
+        r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
+    )
+    writer = CodeWriter(file)
+    writer.read_file()
     print(*writer.write_code(), sep="\n")
     with open("./out.asm", "w") as outfile:
         outfile.writelines([line + "\n" for line in writer.write_code()])
-    # print(*[line.lstrip(" ") + "\n" for line in writer.push_asm(parsed[0])], sep="")
