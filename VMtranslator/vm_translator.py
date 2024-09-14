@@ -366,7 +366,7 @@ class CodeWriter:
             asm = [
                 f"\n// D = RAM[{label}]",
                 f"@{label}",
-                "D=A",
+                "D=M",
                 f"\n// RAM[SP] = D",
                 "@SP",
                 "A=M",
@@ -384,7 +384,7 @@ class CodeWriter:
                 asm = [
                     "\n// D = this",
                     "@THIS",
-                    "D=A",
+                    "D=M",
                     "\n// RAM[SP] = THIS",
                     "@SP",
                     "A=M",
@@ -398,7 +398,7 @@ class CodeWriter:
                 asm = [
                     "\n// D = this",
                     "@THAT",
-                    "D=A",
+                    "D=M",
                     "\n// RAM[SP] = THIS",
                     "@SP",
                     "A=M",
@@ -838,9 +838,9 @@ if __name__ == "__main__":
     # file = Path(
     #     r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
     # )
-    file = Path(r"./MemoryAccess\BasicTest\BasicTest.vm")
+    file = Path(r"./MemoryAccess\StaticTest\StaticTest.vm")
     writer = CodeWriter(file)
     writer.read_file()
     print(*writer.write_code(), sep="\n")
-    with open("./MemoryAccess/BasicTest/BasicTest.asm", "w") as outfile:
+    with open("./MemoryAccess/StaticTest/StaticTest.asm", "w") as outfile:
         outfile.writelines([line + "\n" for line in writer.write_code()])
