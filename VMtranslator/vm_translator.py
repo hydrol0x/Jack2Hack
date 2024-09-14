@@ -8,10 +8,12 @@ class TokenType(Enum):
     PUSH = auto()
     POP = auto()
 
-    # Arithmetic/Logic
+    # Arithmetic
     ADD = auto()
     SUB = auto()
     NEG = auto()
+
+    # Logic
     EQ = auto()
     GT = auto()
     LT = auto()
@@ -176,6 +178,9 @@ class LogicStatement(Statement):
     def __init__(self, op_type: TokenType):
         self.op_type = op_type
 
+    def __repr__(self) -> str:
+        return f"{self.op_type.name}"
+
 
 class ParseError(Exception):
     pass
@@ -285,13 +290,13 @@ class Parser:
                 statements.append(ArithmeticStatement(TokenType.NEG))
                 continue
             elif self.match(TokenType.EQ):
-                statements.append(ArithmeticStatement(TokenType.EQ))
+                statements.append(LogicStatement(TokenType.EQ))
                 continue
             elif self.match(TokenType.GT):
-                statements.append(ArithmeticStatement(TokenType.GT))
+                statements.append(LogicStatement(TokenType.GT))
                 continue
             elif self.match(TokenType.LT):
-                statements.append(ArithmeticStatement(TokenType.LT))
+                statements.append(LogicStatement(TokenType.LT))
                 continue
             elif self.match(TokenType.AND):
                 statements.append(LogicStatement(TokenType.AND))
@@ -325,6 +330,7 @@ class CodeWriter:
     def __init__(self, file: Path):
         self.program_file = file
         self.file_name = file.stem
+        self.num_jumps = 0  # id system for branching commands
         self.program = []
 
     def read_file(self):
@@ -411,7 +417,7 @@ class CodeWriter:
                 f"@{symbol.pointer}",
                 "D=M",
                 f"@{address}",
-                "D=D + A",  # D is the address needed
+                "D=D+A",  # D is the address needed
                 f"\n// D = RAM[D]",
                 "A=D",
                 "D=M",
@@ -439,6 +445,9 @@ class CodeWriter:
         elif symbol.token.lexeme == "static":
             label = f"{self.file_name}.{address}"
             asm = [
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
                 "\n// D = RAM[SP]",
                 "@SP",
                 "A=M",
@@ -446,9 +455,6 @@ class CodeWriter:
                 f"\n// {label} = D",
                 f"@{label}",
                 "M=D",
-                "\n // SP -= 1",
-                "@SP",
-                "M=M-1",
             ]
         elif symbol.token.lexeme == "pointer":
             # Pointer will return THIS if 0 and THAT if 1
@@ -465,6 +471,9 @@ class CodeWriter:
                     f"Invalid value pushed to `pointer`. Expected `0` or `1` found {address}"
                 )
             asm = [
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
                 "\n// D = RAM[SP]",
                 "@SP",
                 "A=M",
@@ -472,29 +481,27 @@ class CodeWriter:
                 f"\n// THIS = D",
                 f"@{this_that}",
                 "M=D",
-                "\n // SP -= 1",
-                "@SP",
-                "M=M-1",
             ]
         else:
             asm = [
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
                 f"\n//R13 = RAM[{symbol.token.lexeme}] + {address}",
                 f"@{symbol.pointer}",
                 "D=M",
                 f"@{address}",
-                "D=D+M",
+                "D=D+A",
                 "@R13",
                 "M=D",
                 "\n// D = RAM[SP]",
                 "@SP",
                 "A=M",
                 "D=M",
-                "\n// RAM[R13] = D" "@R13",
+                "\n// RAM[R13] = D",
+                "@R13",
                 "A=M",
                 "M=D",
-                "\n // SP -= 1",
-                "@SP",
-                "M=M-1",
             ]
 
         # Push value at symbol[address] to stack
@@ -563,8 +570,216 @@ class CodeWriter:
                 ]
         return asm
 
-    # def logic_asm(self, statement) -> list[str]:
-    #     pass
+    @staticmethod
+    def _increment_sp() -> list[str]:
+        asm = [
+            "\n// SP += 1",
+            "@SP",
+            "M=M+1",
+        ]
+        return asm
+
+    @staticmethod
+    def _decrement_sp() -> list[str]:
+        asm = [
+            "\n// SP -= 1",
+            "@SP",
+            "M=M-1",
+        ]
+        return asm
+
+    @staticmethod
+    def _truth_statement() -> list[str]:
+        return [
+            "\n// D = -1",
+            "@1",
+            "D=-A",
+            "\n// RAM[SP] = D",
+            "@SP",
+            "A=M",
+            "M=D",
+            "\n// SP += 1",
+            "@SP",
+            "M=M+1",
+        ]
+
+    @staticmethod
+    def _false_statement():
+        return PushStatement(
+            Symbol(Token(TokenType.SYM, "constant"), 0), Token(TokenType.SYM, "0", 0)
+        )
+
+    def logic_asm(self, statement: LogicStatement) -> list[str]:
+        # -1 is true
+        # 0 is false
+        asm = []
+        match statement.op_type:
+            case TokenType.EQ:
+                true = CodeWriter._truth_statement()
+                false = CodeWriter._false_statement()
+                push_true = true
+                push_false = self.push_asm(false)
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "A=M",
+                    # Now we need to compare if M=D
+                    # equivalnet to M-D=0
+                    "D=M-D",
+                    # if D is now 0, ouput -1 otherwise output 0
+                    f"@TRUE{self.num_jumps}",
+                    "D;JEQ",  # if D = 0, then M=D and so jump to TRUE
+                    "\n// --- push 0 (false) ---",
+                    *push_false,  # PUSH CONST 0
+                    f"@END{self.num_jumps}",  # Jump end
+                    "0;JMP",
+                    f"(TRUE{self.num_jumps})",
+                    "\n// --- push -1 (true) ---",
+                    *push_true,
+                    f"(END{self.num_jumps})",
+                    #   "\n// SP += 1",
+                    # "@SP",
+                    # "M=M+1",
+                ]
+                self.num_jumps += 1
+            case TokenType.LT:
+                true = CodeWriter._truth_statement()
+                false = CodeWriter._false_statement()
+                push_false = self.push_asm(false)
+                push_true = true
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "A=M",
+                    # Now we need to compare if M<D
+                    # equivalnet to M-D<0
+                    "D=M-D",
+                    # if D is now less than 0, ouput -1 otherwise output 0
+                    f"@TRUE{self.num_jumps}",
+                    "D;JLT",  # if D < 0, then M<D and so jump to TRUE
+                    "\n// --- push 0 (false) ---",
+                    *push_false,  # PUSH CONST 0
+                    f"@END{self.num_jumps}",  # Jump end
+                    "0;JMP",
+                    f"(TRUE{self.num_jumps})",
+                    "\n// --- push -1 (true) ---",
+                    *push_true,
+                    f"(END{self.num_jumps})",
+                    # "\n// SP += 1",
+                    # "@SP",
+                    # "M=M+1",
+                ]
+                self.num_jumps += 1
+            case TokenType.GT:
+                true = CodeWriter._truth_statement()
+                false = CodeWriter._false_statement()
+                push_true = true
+                push_false = self.push_asm(false)
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "A=M",
+                    # Now we need to compare if M>D
+                    # equivalnet to M-D>0
+                    "D=M-D",
+                    # if D is now less than 0, ouput -1 otherwise output 0
+                    f"@TRUE{self.num_jumps}",
+                    "D;JGT",  # if D < 0, then M<D and so jump to TRUE
+                    "\n// --- push 0 (false) ---",
+                    *push_false,  # PUSH CONST 0
+                    f"@END{self.num_jumps}",  # Jump end
+                    "0;JMP",
+                    f"(TRUE{self.num_jumps})",
+                    "\n// --- push -1 (true) ---",
+                    *push_true,
+                    f"(END{self.num_jumps})",
+                    # "\n// SP += 1",
+                    # "@SP",
+                    # "M=M+1",
+                ]
+                self.num_jumps += 1
+            case TokenType.AND:
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    # push D & M to stack
+                    "\n// RAM[SP] = M AND D",
+                    "A=M",
+                    "M=D&M",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+            case TokenType.OR:
+                asm = [
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=M",
+                    "\n// SP -= 1",
+                    "@SP",
+                    "M=M-1",
+                    # push D & M to stack
+                    "\n// RAM[SP] = M OR D",
+                    "A=M",
+                    "M=D|M",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+            case TokenType.NOT:
+                asm = [
+                    "\n// SP -=1",
+                    "@SP",
+                    "M=M-1",
+                    "\n// D = !RAM[SP]",
+                    "@SP",
+                    "A=M",
+                    "D=!M",
+                    "\n// RAM[SP] = D",
+                    "@SP",
+                    "A=M",
+                    "M=D",
+                    "\n// SP += 1",
+                    "@SP",
+                    "M=M+1",
+                ]
+        return asm
 
     def write_code(self):
         out_asm = []
@@ -584,13 +799,15 @@ class CodeWriter:
                 descriptor.extend(asm)
                 out_asm += descriptor
             elif isinstance(statement, ArithmeticStatement):
-                descriptor = [f"\n//--- add ---"]
+                descriptor = [f"\n//--- {statement.op_type} ---"]
                 asm = self.arithmetic_asm(statement)
                 descriptor.extend(asm)
                 out_asm += descriptor
             elif isinstance(statement, LogicStatement):
-                raise NotImplementedError
-                self.logic_asm(statement)
+                descriptor = [f"\n//--- {statement.op_type} ---"]
+                asm = self.logic_asm(statement)
+                descriptor.extend(asm)
+                out_asm += descriptor
 
         return out_asm
 
@@ -618,11 +835,12 @@ if __name__ == "__main__":
     # print(*parsed, sep="\n")
     #
 
-    file = Path(
-        r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
-    )
+    # file = Path(
+    #     r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
+    # )
+    file = Path(r"./MemoryAccess\BasicTest\BasicTest.vm")
     writer = CodeWriter(file)
     writer.read_file()
     print(*writer.write_code(), sep="\n")
-    with open("./out.asm", "w") as outfile:
+    with open("./MemoryAccess/BasicTest/BasicTest.asm", "w") as outfile:
         outfile.writelines([line + "\n" for line in writer.write_code()])
