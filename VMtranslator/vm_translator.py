@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from enum import Enum, auto
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class TokenType(Enum):
     # Used for parsing; not part of specification
     EOF = auto()
 
+
     def __str__(self):
         return self.name
 
@@ -45,7 +47,7 @@ class TokenError(Exception):
 
 class Token:
     def __init__(self, type_: TokenType, lexeme: str, literal: object = None):
-        self.type = type_
+        self.type_ = type_
         self.lexeme = lexeme  # text representation, like `push`, `pop`, `add`
         self.literal = literal  # Pyton object representing any literal values
 
@@ -72,6 +74,9 @@ class Lexer:
         self.program: list[str] = []
         # self.program_file = program_file
         self.tokens: list[Token] = []
+
+    def _is_symbol(self, string: str) -> bool:
+        return any([c.isprintable() and c!=" " for c in string])
 
     def _lex_element(self, element: str) -> Token | None:
         match element:
@@ -106,7 +111,7 @@ class Lexer:
             case _:
                 if element.isnumeric():
                     return Token(TokenType.ADDR, element, int(element))
-                elif element.isalpha():
+                elif self._is_symbol(element):
                     return Token(TokenType.SYM, element, element)
                 else:
                     raise TokenError(f"Illegal token {element}")
@@ -145,10 +150,9 @@ class Lexer:
 class Statement:
     pass
 
-
 class PushStatement(Statement):
     def __init__(self, symbol: Symbol, address: Token):
-        # push label address
+        # push register-label address
         self.symbol = symbol
         self.address = address
 
@@ -158,12 +162,12 @@ class PushStatement(Statement):
 
 class PopStatement(Statement):
     def __init__(self, symbol: Symbol, address: Token):
-        # push label address
+        # push register-label address
         self.symbol = symbol
         self.address = address
 
     def __repr__(self) -> str:
-        return f"PUSH({self.symbol}, {self.address})"
+        return f"POP({self.symbol}, {self.address})"
 
 
 class ArithmeticStatement(Statement):
@@ -181,10 +185,17 @@ class LogicStatement(Statement):
     def __repr__(self) -> str:
         return f"{self.op_type.name}"
 
+# TODO: all the statements should store Token not Tokentype 
+class LabelStatement(Statement):
+    def __init__(self, token: Token, symbol: Token):
+        self.token = token
+        self.symbol = symbol
+
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
 
 class ParseError(Exception):
     pass
-
 
 # Will return list of valid operations
 class Parser:
@@ -208,7 +219,7 @@ class Parser:
         self.TEMP_PTR: int = 5
 
     def is_at_end(self) -> bool:
-        return self.peek().type == TokenType.EOF
+        return self.peek().type_ == TokenType.EOF
 
     def peek(self) -> Token:
         return self.tokens[self.current]
@@ -232,7 +243,7 @@ class Parser:
         if self.is_at_end():
             return False
         else:
-            return self.peek().type == expected
+            return self.peek().type_ == expected
 
     def consume(self, type: TokenType):
         if self.check(type):
@@ -307,11 +318,16 @@ class Parser:
             elif self.match(TokenType.NOT):
                 statements.append(LogicStatement(TokenType.NOT))
                 continue
+            elif self.match(TokenType.LABEL):
+                symbol_token = self.consume(TokenType.SYM)
+                statements.append(LabelStatement(token, symbol_token))
             elif self.match(TokenType.ADDR):
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found address {self.previous()}.\n Address can only come with `push`, `pop`, `function`, `call` commands"
                 )
             elif self.match(TokenType.SYM):
+                # symbol is called register-label through code
+                # TODO: probably change naming to be consistent. Things like static, const, etc. are 'symbols'
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found symbol {self.previous()}.\n Symbol can only come with `push`, `goto`, `if-goto`, `function`, `call` commands"
                 )
@@ -361,11 +377,11 @@ class CodeWriter:
             ]
         elif symbol.token.lexeme == "static":
             # If function defined in Foo.vm push to Foo.i
-            # This maps thru assembler as label RAM[16]-RAM[256]
-            label = f"{self.file_name}.{address}"
+            # This maps thru assembler as register-label RAM[16]-RAM[256]
+            register_label = f"{self.file_name}.{address}"
             asm = [
-                f"\n// D = RAM[{label}]",
-                f"@{label}",
+                f"\n// D = RAM[{register_label}]",
+                f"@{register_label}",
                 "D=M",
                 f"\n// RAM[SP] = D",
                 "@SP",
@@ -443,7 +459,7 @@ class CodeWriter:
             # Here, address is not an address but just a constant/litearl value
             raise WriterError("Illegal argument. Cannot pop from `constant`")
         elif symbol.token.lexeme == "static":
-            label = f"{self.file_name}.{address}"
+            register_label = f"{self.file_name}.{address}"
             asm = [
                 "\n // SP -= 1",
                 "@SP",
@@ -452,8 +468,8 @@ class CodeWriter:
                 "@SP",
                 "A=M",
                 "D=M",
-                f"\n// {label} = D",
-                f"@{label}",
+                f"\n// {register_label} = D",
+                f"@{register_label}",
                 "M=D",
             ]
         elif symbol.token.lexeme == "pointer":
@@ -780,6 +796,13 @@ class CodeWriter:
                     "M=M+1",
                 ]
         return asm
+    
+    def label_asm(self, statement: LabelStatement):
+        asm = [
+            # TODO: this should use literal
+            f"({statement.symbol.lexeme})"
+        ]
+        return asm
 
     def write_code(self):
         out_asm = []
@@ -806,6 +829,11 @@ class CodeWriter:
             elif isinstance(statement, LogicStatement):
                 descriptor = [f"\n//--- {statement.op_type} ---"]
                 asm = self.logic_asm(statement)
+                descriptor.extend(asm)
+                out_asm += descriptor
+            elif isinstance(statement, LabelStatement):
+                descriptor = [f"\n//--- {statement.token.type_} ---"]
+                asm = self.label_asm(statement)
                 descriptor.extend(asm)
                 out_asm += descriptor
 
@@ -838,9 +866,24 @@ if __name__ == "__main__":
     # file = Path(
     #     r"C:\Users\mrjac\Documents\Programming\Jack2Hack\VMtranslator\StackArithmetic\SimpleAdd\SimpleAdd.vm"
     # )
-    file = Path(r"./MemoryAccess\StaticTest\StaticTest.vm")
-    writer = CodeWriter(file)
+    #file = Path(r"./MemoryAccess\StaticTest\StaticTest.vm")
+    #writer = CodeWriter(file)
+    #writer.read_file()
+    #print(*writer.write_code(), sep="\n")
+    #with open("./MemoryAccess/StaticTest/StaticTest.asm", "w") as outfile:
+    #    outfile.writelines([line + "\n" for line in writer.write_code()])
+
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser(prog="Hack VM Translator")
+    parser.add_argument("path")
+    parser.add_argument("-o", "--out", default="./out.asm")
+    args = parser.parse_args()
+    filepath = args.path
+    out = args.out
+    writer = CodeWriter(Path(filepath))
     writer.read_file()
-    print(*writer.write_code(), sep="\n")
-    with open("./MemoryAccess/StaticTest/StaticTest.asm", "w") as outfile:
+    print(*([line + "\n" for line in writer.write_code()]))
+    with open(out, "w") as outfile:
         outfile.writelines([line + "\n" for line in writer.write_code()])
+
