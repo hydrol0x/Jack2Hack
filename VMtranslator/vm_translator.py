@@ -52,7 +52,7 @@ class Token:
         self.literal = literal  # Pyton object representing any literal values
 
     def __repr__(self) -> str:
-        return f"⧙{self.type} '{self.lexeme}'⧘"
+        return f"⧙{self.type_} '{self.lexeme}'⧘"
 
 
 class Symbol:
@@ -357,7 +357,6 @@ class CodeWriter:
         self.program = parser.parse()
 
     def push_asm(self, push: PushStatement) -> list[str]:
-        # TODO: implement push and pop to static
         symbol = push.symbol
         address = int(push.address.lexeme)
         if symbol.token.lexeme == "constant":
@@ -427,6 +426,24 @@ class CodeWriter:
                 raise WriterError(
                     f"Invalid value pushed to `pointer`. Expected `0` or `1` found {address}"
                 )
+        elif symbol.token.lexeme == "temp":
+             asm = [
+                f"\n// D = {address}+5",
+                f"@5",
+                "D=A",
+                f"@{address}",
+                "D=D+A",  # D is the address needed
+                f"\n// D = RAM[D]",
+                "A=D",
+                "D=M",
+                f"\n// RAM[SP] = {symbol.token.lexeme}[{address}]",
+                "@SP",
+                "A=M",
+                "M=D",
+                "\n// SP += 1",
+                "@SP",
+                "M=M+1",
+            ]
         else:
             asm = [
                 f"\n// D = {address}+RAM[{symbol.pointer}]",
@@ -451,7 +468,6 @@ class CodeWriter:
         return asm
 
     def pop_asm(self, pop: PopStatement) -> list[str]:
-        # TODO: properly handl *SP shoudl be @SP, A=M
         symbol = pop.symbol
         address = int(pop.address.lexeme)
         if symbol.token.lexeme == "constant":
@@ -496,6 +512,27 @@ class CodeWriter:
                 "D=M",
                 f"\n// THIS = D",
                 f"@{this_that}",
+                "M=D",
+            ]
+        elif symbol.token.lexeme == "temp":
+            asm = [
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
+                f"\n//R13 = 5 + {address}",
+                f"@5",
+                "D=A",
+                f"@{address}",
+                "D=D+A",
+                "@R13",
+                "M=D",
+                "\n// D = RAM[SP]",
+                "@SP",
+                "A=M",
+                "D=M",
+                "\n// RAM[R13] = D",
+                "@R13",
+                "A=M",
                 "M=D",
             ]
         else:
@@ -886,4 +923,5 @@ if __name__ == "__main__":
     print(*([line + "\n" for line in writer.write_code()]))
     with open(out, "w") as outfile:
         outfile.writelines([line + "\n" for line in writer.write_code()])
+
 
