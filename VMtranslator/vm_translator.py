@@ -207,6 +207,15 @@ class IfStatement(Statement):
     def __repr__(self) -> str:
         return f"{self.token.type_.name}"
 
+class GotoStatement(Statement):
+    def __init__(self, token: Token, symbol: Token):
+        self.token = token
+        self.symbol = symbol
+
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
+
+
 
 
 class ParseError(Exception):
@@ -337,10 +346,11 @@ class Parser:
                 symbol_token = self.consume(TokenType.SYM)
                 statements.append(LabelStatement(token, symbol_token))
             elif self.match(TokenType.IFGT):
-                print(f"matched label {self.peek()}")
                 symbol_token = self.consume(TokenType.SYM)
-                print(f"symbol token {symbol_token}")
                 statements.append(IfStatement(token, symbol_token))
+            elif self.match(TokenType.GOTO):
+                symbol_token = self.consume(TokenType.SYM)
+                statements.append(GotoStatement(token, symbol_token))
             elif self.match(TokenType.ADDR):
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found address {self.previous()}.\n Address can only come with `push`, `pop`, `function`, `call` commands"
@@ -864,9 +874,16 @@ class CodeWriter:
         ]
         return asm
 
+    def goto_asm(self, statement: GotoStatement)-> list[str]:
+        symbol = statement.symbol
+        asm = [
+            f"@{symbol.literal}",
+            "0;JMP"
+        ]
+        return asm
+
     def if_asm(self, statement: IfStatement):
         symbol = statement.symbol
-        asm = []
         # jump to the label specified
         # assembly:
         # D;jle, D;jeq, D;jgt, 0;jmp
@@ -926,6 +943,11 @@ class CodeWriter:
                 asm = self.if_asm(statement)
                 descriptor.extend(asm)
                 out_asm+=descriptor
+            elif isinstance(statement, GotoStatement):
+               descriptor = [f"\n//--- {statement.token.type_} ---"]
+               asm = self.goto_asm(statement)
+               descriptor.extend(asm)
+               out_asm+=descriptor
             else:
                 assert False, f"{statement} code writing is not implemented"
 
