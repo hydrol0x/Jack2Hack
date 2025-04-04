@@ -147,6 +147,11 @@ class Lexer:
             outfile.writelines([str(token) + "\n" for token in self.tokens])
 
 
+# TODO: we shouldn't need a separate class for each since the self.symbol will store the token which 
+# can be used to switch on in code generation, consolidate into one, or have unary, binary, e.g
+
+# Also, by consolidating the naming of properties can be resovled keep reusing and mixing symbol and token 
+
 class Statement:
     pass
 
@@ -193,6 +198,16 @@ class LabelStatement(Statement):
 
     def __repr__(self) -> str:
         return f"{self.token.type_.name}"
+
+class IfStatement(Statement):
+    def __init__(self, token: Token, symbol: Token):
+        self.token = token
+        self.symbol = symbol
+
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
+
+
 
 class ParseError(Exception):
     pass
@@ -321,6 +336,11 @@ class Parser:
             elif self.match(TokenType.LABEL):
                 symbol_token = self.consume(TokenType.SYM)
                 statements.append(LabelStatement(token, symbol_token))
+            elif self.match(TokenType.IFGT):
+                print(f"matched label {self.peek()}")
+                symbol_token = self.consume(TokenType.SYM)
+                print(f"symbol token {symbol_token}")
+                statements.append(IfStatement(token, symbol_token))
             elif self.match(TokenType.ADDR):
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found address {self.previous()}.\n Address can only come with `push`, `pop`, `function`, `call` commands"
@@ -343,6 +363,9 @@ class WriterError(Exception):
 class CodeWriter:
     # TODO: unhardcode the offsets for memory segments, access through ram pointers
     # Writes ASM from program parse
+
+    # TODO: create a static method for more things and use increment, decrement static methods
+    # Some example include loading into stack pointer (*SP), load into a particular memory location *loc, etc
     def __init__(self, file: Path):
         self.program_file = file
         self.file_name = file.stem
@@ -841,6 +864,26 @@ class CodeWriter:
         ]
         return asm
 
+    def if_asm(self, statement: IfStatement):
+        symbol = statement.symbol
+        asm = []
+        # jump to the label specified
+        # assembly:
+        # D;jle, D;jeq, D;jgt, 0;jmp
+        #in general computation; jump type, jumps to address in A register
+        # Probably should do *SP, M;jmp type
+        # -1 is true
+        # 0 is false
+        asm = [
+            *CodeWriter._decrement_sp(),
+            "@SP",
+            "A=M",
+            "D=M",
+            f"@{symbol.literal}",
+            f"D;JNE", # jump if true, so jump if -1, 0
+        ]
+        return asm
+        
     def write_code(self):
         out_asm = []
         for statement in self.program:
@@ -873,6 +916,18 @@ class CodeWriter:
                 asm = self.label_asm(statement)
                 descriptor.extend(asm)
                 out_asm += descriptor
+            elif isinstance(statement, IfStatement):
+                # jump to the label specified
+                # assembly:
+                # D;jle, D;jeq, D;jgt, 0;jmp
+                #in general computation; jump type, jumps to address in A register
+                # Probably should do *SP, M;jmp type
+                descriptor = [f"\n//--- {statement.token.type_} ---"]
+                asm = self.if_asm(statement)
+                descriptor.extend(asm)
+                out_asm+=descriptor
+            else:
+                assert False, f"{statement} code writing is not implemented"
 
         return out_asm
 
