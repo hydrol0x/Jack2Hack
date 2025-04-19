@@ -1,4 +1,4 @@
-.asm
-.vm
-.tst
-.hack
+*.asm
+*.vm
+*.tst
+*.hack
