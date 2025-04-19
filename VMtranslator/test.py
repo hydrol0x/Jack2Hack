@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import subprocess
 
@@ -10,8 +11,14 @@ if __name__ == "__main__":
     user_path = Path(args.path)
 
     for file in user_path.rglob("*.vm"):
+        output_path = Path("out_asm") / file.parent / f"{file.stem}.asm"
+        output_path.parent.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
+
         print(f"Testing VM translator on {file}")
-        ret = subprocess.run(["python3", "vm_translator.py", file, "-o", f"out_asm/{file.stem}.asm"],capture_output=True)
-        print(f"OUT: {str(ret.stdout)}")
-        print(f"ERR:\033[31m{str(ret.stderr)}\033[0m")
+        ret = subprocess.run(
+            ["python3", "vm_translator.py", str(file), "-o", str(output_path)],
+            capture_output=True
+        )
+        print(f"OUT: {ret.stdout.decode().strip()}")
+        print(f"ERR:\033[31m{ret.stderr.decode().strip()}\033[0m")
         print("________________________________________________________\n")
