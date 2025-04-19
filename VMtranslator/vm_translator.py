@@ -23,7 +23,7 @@ class TokenType(Enum):
     NOT = auto()
 
     # Numeric memory address
-    ADDR = auto()
+    NUM = auto()
 
     # Symbol
     SYM = auto()
@@ -32,6 +32,11 @@ class TokenType(Enum):
     LABEL = auto()
     GOTO = auto()
     IFGT = auto()
+
+    # Functions
+    FUNCTION = auto()
+    RETURN = auto()
+    CALL = auto()
 
     # Used for parsing; not part of specification
     EOF = auto()
@@ -73,7 +78,7 @@ class Lexer:
     def __init__(self):
         self.program: list[str] = []
         # self.program_file = program_file
-        self.tokens: list[Token] = []
+        self.tokens: list = []
 
     def _is_symbol(self, string: str) -> bool:
         return any([c.isprintable() and c!=" " for c in string])
@@ -108,9 +113,15 @@ class Lexer:
                 return Token(TokenType.GOTO, element)
             case "if-goto":
                 return Token(TokenType.IFGT, element)
+            case "function":
+                return Token(TokenType.FUNCTION, element)
+            case "return":
+                return Token(TokenType.RETURN, element)
+            case "call":
+                return Token(TokenType.CALL, element)
             case _:
                 if element.isnumeric():
-                    return Token(TokenType.ADDR, element, int(element))
+                    return Token(TokenType.NUM, element, int(element))
                 elif self._is_symbol(element):
                     return Token(TokenType.SYM, element, element)
                 else:
@@ -215,8 +226,30 @@ class GotoStatement(Statement):
     def __repr__(self) -> str:
         return f"{self.token.type_.name}"
 
+class FnStatement(Statement):
+    def __init__(self, token: Token, fn_name: Token, num_locals: Token):
+        self.token = token
+        self.fn_name = fn_name # fn name
+        self.num_locals = num_locals
 
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
 
+class CallStatement(Statement):
+    def __init__(self, token: Token, called_fn: Token, num_args: Token):
+        self.token = token
+        self.called_fn = called_fn 
+        self.num_args = num_args 
+
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
+
+class RetStatement(Statement):
+    def __init__(self, token: Token):
+        self.token = token
+
+    def __repr__(self) -> str:
+        return f"{self.token.type_.name}"
 
 class ParseError(Exception):
     pass
@@ -306,13 +339,13 @@ class Parser:
             if self.match(TokenType.PUSH):
                 symbol_token = self.consume(TokenType.SYM)
                 symbol = self.get_symbol(symbol_token)
-                address = self.consume(TokenType.ADDR)
+                address = self.consume(TokenType.NUM)
                 statements.append(PushStatement(symbol, address))
                 continue
             elif self.match(TokenType.POP):
                 symbol_token = self.consume(TokenType.SYM)
                 symbol = self.get_symbol(symbol_token)
-                address = self.consume(TokenType.ADDR)
+                address = self.consume(TokenType.NUM)
                 statements.append(PopStatement(symbol, address))
                 continue
             elif self.match(TokenType.ADD):
@@ -351,7 +384,17 @@ class Parser:
             elif self.match(TokenType.GOTO):
                 symbol_token = self.consume(TokenType.SYM)
                 statements.append(GotoStatement(token, symbol_token))
-            elif self.match(TokenType.ADDR):
+            elif self.match(TokenType.FUNCTION):
+                fn_name = self.consume(TokenType.SYM)
+                fn_num_locals = self.consume(TokenType.NUM)
+                statements.append(FnStatement(token, fn_name, fn_num_locals))
+            elif self.match(TokenType.RETURN):
+                statements.append(RetStatement(token))
+            elif self.match(TokenType.CALL):
+                called_fn = self.consume(TokenType.SYM) # function being called
+                num_args = self.consume(TokenType.NUM) # num args the function takes
+                statements.append(CallStatement(token, called_fn, num_args))
+            elif self.match(TokenType.NUM):
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found address {self.previous()}.\n Address can only come with `push`, `pop`, `function`, `call` commands"
                 )
@@ -361,6 +404,8 @@ class Parser:
                 raise ParseError(
                     f"Expected command or Arithmetic/Logic operation, found symbol {self.previous()}.\n Symbol can only come with `push`, `goto`, `if-goto`, `function`, `call` commands"
                 )
+            
+
             else:
                 raise ParseError(f"Illegal token {self.peek()}")
         return statements
@@ -381,6 +426,9 @@ class CodeWriter:
         self.file_name = file.stem
         self.num_jumps = 0  # id system for branching commands
         self.program = []
+        self.fn_call_lookup = {}
+        NOFUNC = FnStatement(Token(TokenType.FUNCTION, "function"), Token(TokenType.LABEL, "NOFUNC"), Token(TokenType.NUM, "0", 0)) # if we see NOFUNC in the generated code there is some issue since the entrypoint is already a function. 
+        self.current_function = NOFUNC # function we are currently inside
 
     def read_file(self):
         lexer = Lexer()
@@ -869,16 +917,224 @@ class CodeWriter:
     
     def label_asm(self, statement: LabelStatement):
         asm = [
-            # TODO: this should use literal
-            f"({statement.symbol.lexeme})"
+            # Format is filename.fnname$labelname
+            # NOTE: filename.fname is just the fnname provided since the generated function names in the VM code will already have this format
+            f"({self.current_function.fn_name.literal}${statement.symbol.literal})"
         ]
         return asm
 
     def goto_asm(self, statement: GotoStatement)-> list[str]:
         symbol = statement.symbol
         asm = [
-            f"@{symbol.literal}",
+            f"@{self.current_function.fn_name.literal}${symbol.literal}",
             "0;JMP"
+        ]
+        return asm
+ 
+
+    def call_asm(self, statement: CallStatement)-> list[str]:
+        """
+        STACK
+        [val]
+        [val]
+        [arg1]     |
+        [arg2]     |
+        [arg3]     n args
+        [Ret Adr]  |
+        [LCL]      |
+        [ARG]      |
+        [THIS]     |
+        [THAT]     saved caller frame
+   SP -> ----  
+
+On Call: 
+    - Save the caller frame
+    - Handle call:
+        - Reposition ARG pointer (start of n args, ARG = SP-5-nArgs)
+        - Reposition LCL (Local variables, set to LCL = SP)
+        - execute called function code (goto functionName)
+        - insert the return address label
+
+        """
+        assert isinstance(statement.num_args.literal, int), "This should always be an integer representing num args"
+        nArgs = statement.num_args.literal
+        fn_name = statement.called_fn.literal
+
+        if fn_name in self.fn_call_lookup:
+            self.fn_call_lookup[fn_name] += 1 # if the function has been called before, increment the counter for that function
+        else:
+            self.fn_call_lookup[fn_name] = 0
+        i = self.fn_call_lookup[fn_name]
+        ret_label = f"{fn_name}$ret.{i}"
+        args_offset = 5 + nArgs
+        push_A_reg = [
+           "D=A",
+           "\n// RAM[SP] = D",
+           "@SP",
+           "A=M",
+           "M=D",
+           "\n// SP += 1",
+           "@SP",
+           "M=M+1",
+        ]
+        caller_stack = [
+            "// push retAddr"
+            f"@{ret_label}",
+            *push_A_reg,
+            "// push LCL",
+            "@LCL",
+            *push_A_reg,
+            "// push ARG",
+            "@ARG",
+            *push_A_reg,
+            "// push THIS",
+            "@THIS",
+            *push_A_reg,
+            "// push THAT",
+            "@THAT",
+            *push_A_reg,
+        ]
+        
+        goto_function = [
+            f"@{fn_name}",
+            "0;JMP"
+        ]
+
+        asm = [
+            "// Push caller frame",
+            *caller_stack,
+            "// ARG = SP - 5 - nArgs",
+            "@SP",
+            "D=M",
+            f"@{args_offset}"
+            "D=D-A" # D = SP - Args Offset
+            "@ARG",
+            "M=D",
+            "// LCL = SP",
+            "@SP",
+            "D=M",
+            "@LCL",
+            "M=D",
+            *goto_function,
+            f"({ret_label})"
+        ]
+        return asm
+       
+    def fn_asm(self, statement: FnStatement):
+        fn_name = statement.fn_name.literal
+        assert isinstance(statement.num_locals.literal, int)
+        num_args = int(statement.num_locals.literal)
+        push_const = lambda constant: [
+                f"\n// D = {constant}",
+                f"@{constant}",
+                "D=A",
+                "\n// RAM[SP] = D",
+                "@SP",
+                "A=M",
+                "M=D",
+                "\n// SP += 1",
+                "@SP",
+                "M=M+1",
+            ]
+
+        init_local: list[str] = []
+        for _ in range(num_args):
+            init_local.extend(push_const(0))
+
+        asm = [
+            f"// function {fn_name} {num_args}",
+            f"({fn_name})",
+            "// Initialize local variables",
+            *init_local,
+        ]
+        return asm
+    
+    def ret_asm(self, statement:RetStatement):
+        """
+        temp 0 = LCL # temp 0 is 'endFrame'
+        temp 1 = *(endFrame - 5) # temp 1 is retAddr
+        pop arg 0 // pops the return value at the top of the stack to arg 0 
+        SP =  ARG + 1
+        THAT = *(endFrame - 1)
+        THIS = *(endFrame - 2)
+        ARG  = *(endFrame - 3)
+        LCL  = *(endFrame - 4)
+        goto retAddr
+        """
+        pop_arg_0 = [
+                "\n // SP -= 1",
+                "@SP",
+                "M=M-1",
+                f"\n//R13 = RAM[ARG] + 0",
+                f"@ARG",
+                "D=M",
+                f"@0",
+                "D=D+A",
+                "@R13",
+                "M=D",
+                "\n// D = RAM[SP]",
+                "@SP",
+                "A=M",
+                "D=M",
+                "\n// RAM[R13] = D",
+                "@R13",
+                "A=M",
+                "M=D",
+            ]
+
+        
+        asm = [
+            "// *ARG = pop()",
+            *pop_arg_0,
+            "// SP = ARG + 1",
+            "@ARG",
+            "D=M+1",
+            "@SP",
+            "M=D",
+            "// Reset call frame"
+            "// THAT = *(LCL - 1); endFrame = LCL"
+            ,"@LCL",
+            "D=M-1",
+            "A=D",
+            "D=M",
+            "@THAT",
+            "M=D",
+            "// THIS = *(LCL - 2)",
+            "@LCL",
+            "D=M-1",
+            "D=D-1",
+            "A=D",
+            "D=M",
+            "@THIS",
+            "M=D",
+            "// ARG = *(LCL - 3)",
+            "@LCL",
+            "D=M-1",
+            "D=D-1",
+            "D=D-1",
+            "A=D",
+            "D=M",
+            "@ARG",
+            "M=D",
+            "// LCL = *(LCL - 4)",
+            "@LCL",
+            "D=M-1",
+            "D=D-1",
+            "D=D-1",
+            "D=D-1",
+            "A=D",
+            "D=M",
+            "@LCL",
+            "M=D",
+            "// goto retAddr"
+            "@LCL",
+            "D=M-1",
+            "D=D-1",
+            "D=D-1",
+            "D=D-1",
+            "D=D-1",
+            "A=D",
+            "0;JMP",
         ]
         return asm
 
@@ -896,8 +1152,8 @@ class CodeWriter:
             "@SP",
             "A=M",
             "D=M",
-            f"@{symbol.literal}",
-            f"D;JNE", # jump if true, so jump if -1, 0
+            f"@{self.current_function.fn_name.literal}${symbol.literal}",
+            f"D;JNE", # jump if true, so jump if -1, aka NE to 0; all non 0 values are truthy
         ]
         return asm
         
@@ -948,6 +1204,22 @@ class CodeWriter:
                asm = self.goto_asm(statement)
                descriptor.extend(asm)
                out_asm+=descriptor
+            elif isinstance(statement, CallStatement):
+               descriptor = [f"\n//--- {statement.token.type_} ---"]
+               asm = self.call_asm(statement)
+               descriptor.extend(asm)
+               out_asm+=descriptor
+            elif isinstance(statement, FnStatement):
+               self.current_function=statement
+               descriptor = [f"\n//--- {statement.token.type_} ---"]
+               asm = self.fn_asm(statement)
+               descriptor.extend(asm)
+               out_asm+=descriptor
+            elif isinstance(statement, RetStatement):
+               descriptor = [f"\n//--- {statement.token.type_} ---"]
+               asm = self.ret_asm(statement)
+               descriptor.extend(asm)
+               out_asm+=descriptor
             else:
                 assert False, f"{statement} code writing is not implemented"
 
@@ -995,10 +1267,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     filepath = args.path
     out = args.out
+    print(f"Translating {filepath}")
     writer = CodeWriter(Path(filepath))
     writer.read_file()
-    print(*([line + "\n" for line in writer.write_code()]))
+    # print(*([line + "\n" for line in writer.write_code()]))
     with open(out, "w") as outfile:
+        print("Writing to " + out)
         outfile.writelines([line + "\n" for line in writer.write_code()])
 
 
