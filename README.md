@@ -5,5 +5,5 @@ Implementation of all the tools needed to go from a Jack program (high level 'Ja
 Includes:
 
 - (WIP) Jack compiler to Jack IR
-- (WIP) Jack IR to Hack assembly
+- Jack IR to Hack assembly
 - Hack assembly assembler (assembly --> Hack machine code)
